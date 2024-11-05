@@ -1,6 +1,7 @@
 # Project specifics
 jim-haslett-csc6220-hw5
 jim-haslett-csc6220-hw5-serial
+jim-haslett-csc6220-hw5-sendrecv
 *.txt
 *.zip
 *.csv

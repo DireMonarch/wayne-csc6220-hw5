@@ -24,11 +24,25 @@ void add_sub_matrix_chunks(int *sub_matrix_a, int *sub_matrix_b, int *sub_matrix
     }
 }
 
+double wtime() {
+    /**
+     * wtime function used to generate a wall time, in seconds, similar to MPI_wtime()
+     * 
+     * Based entirely on the MPI_wtime implementation:
+     * https://github.com/open-mpi/ompi/blob/main/ompi/mpi/c/wtime.c
+     */
+
+    double wtime;
+    struct timespec tp;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &tp);
+    wtime  = (double)tp.tv_nsec/1.0e+9;
+    wtime += tp.tv_sec;
+    return wtime;
+}
+
 int main(int argc,char* argv[]) {
     
-    /* set up timers */
-    clock_t start_time, end_time;
-    start_time = clock();
+
 
     /* establish matricies */
     int matrix_a[MATRIX_SIZE * MATRIX_SIZE];
@@ -42,11 +56,15 @@ int main(int argc,char* argv[]) {
         matrix_a[i] = val;
         matrix_b[i] = val;
     }
+    
+    /* set up timers */
+    double start_time, end_time;
+    start_time = wtime();
 
     /* process our sub matricies */
     add_sub_matrix_chunks(matrix_a, matrix_b, matrix_c, MATRIX_SIZE);
 
-    end_time = clock();
+    end_time = wtime();
 
     /* Output result matrix to file */
     FILE *outfile; /* File Pointer for output */
@@ -61,10 +79,11 @@ int main(int argc,char* argv[]) {
     
     /* output execution time to file */
     outfile = fopen(REPORTFILENAME, "a");
-    fprintf(outfile, "Serial process time: %f\n", (double)(end_time - start_time) / CLOCKS_PER_SEC);
+    fprintf(outfile, "Serial process time: %f\n", end_time - start_time);
     fclose(outfile);
 
-    printf("start %f  end %f   diff %f\n", (double)start_time, (double)end_time, (double)(end_time - start_time) / CLOCKS_PER_SEC);
+    /* Print execution time to screen*/
+    printf("Serial process time: %f\n", end_time - start_time);
 
     return 0;
 }

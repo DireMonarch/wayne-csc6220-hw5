@@ -8,6 +8,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "mpi.h"
 
 #define MATRIX_SIZE 2048
@@ -29,33 +30,40 @@ int main(int argc,char* argv[]) {
     /* MPI rank */
     int rank;
 
+    /* Number of processes running */
+    int number_of_processes;
+
+    /* Timer variables */
+    double start_time, end_time, c_start_time, c_end_time;
+
+    /* establish matricies */
+    int *matrix_a = NULL;
+    int *matrix_b = NULL;
+    int *matrix_c = NULL;
+
     /* Initialize MPI */
     MPI_Init(&argc, &argv);
 
     /* Fetch rank */
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    int number_of_processes; /* Number of processes running */
-
     /* Calculate number of rows per process */
     MPI_Comm_size(MPI_COMM_WORLD, &number_of_processes);
     int rows_per_process = MATRIX_SIZE / number_of_processes;
     int element_count = MATRIX_SIZE * rows_per_process;
 
-    /* receive status variable */
-    MPI_Status status;
+    /* establish sub matrix chunks */
+    int sub_matrix_a[element_count];
+    int sub_matrix_b[element_count];
+    int sub_matrix_c[element_count];   
 
     if(rank == 0) {
-        /* This process is rank 0, therefore it's the controller */
+        /* This process is rank 0, therefore it's the root */
 
-        /* set up timers */
-        double start_time, end_time;
-        start_time = MPI_Wtime();
-
-        /* establish matricies */
-        int matrix_a[MATRIX_SIZE * MATRIX_SIZE];
-        int matrix_b[MATRIX_SIZE * MATRIX_SIZE];
-        int matrix_c[MATRIX_SIZE * MATRIX_SIZE];
+        /* allocate space for matricies */
+        matrix_a = (int *)malloc(MATRIX_SIZE * MATRIX_SIZE * sizeof(int));
+        matrix_b = (int *)malloc(MATRIX_SIZE * MATRIX_SIZE * sizeof(int));
+        matrix_c = (int *)malloc(MATRIX_SIZE * MATRIX_SIZE * sizeof(int));
 
         /* Fill matricies */
         int val;
@@ -65,31 +73,34 @@ int main(int argc,char* argv[]) {
             matrix_b[i] = val;
         }
 
-        /* Distribute submatricies to other processes */
-        int *buffer_ptr_a = matrix_a;
-        int *buffer_ptr_b = matrix_b;
-        for(int i = 1; i < number_of_processes; i++) {
-            /**
-             * buffer_ptr_a + (element_count * i) will send a pointer to the location in the main array
-             * offset by element_count * i, where element_count is the number of elements to send to each
-             * process.  element_count is calcuated by multiplying the number of elements per row (MATRIX_SIZE)
-             * by the number of rows calculated to send to each process (rows_per_process).
-             * 
-             * This is a bit of C "trickery" as an alternate way to access/refer to an array.
-             */
-            MPI_Send( buffer_ptr_a + (element_count * i), element_count , MPI_INT , i , 0 , MPI_COMM_WORLD); // tag 0 for matrix_a
-            MPI_Send( buffer_ptr_b + (element_count * i), element_count , MPI_INT , i , 1 , MPI_COMM_WORLD); // tab 1 for matrix_b
-        }
+        /* Record start time */
+        start_time = MPI_Wtime();
 
-        /* process our sub matricies */
-        add_sub_matrix_chunks(matrix_a, matrix_b, matrix_c, rows_per_process);  // this works on the main matricies only because rank 0 processes the first rows
+    } // if rank==0
+ 
+    /* Distribute submatricies to all processes */
+    MPI_Scatter( matrix_a, element_count, MPI_INT, sub_matrix_a, element_count, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Scatter( matrix_b, element_count, MPI_INT, sub_matrix_b, element_count, MPI_INT, 0, MPI_COMM_WORLD);
 
-        /* Collect results from other processes */
-        int *buffer_ptr_c = matrix_c;
-        for(int i = 1; i < number_of_processes; i++) {
-            MPI_Recv( buffer_ptr_c + (element_count * i), element_count , MPI_INT , i , 2 , MPI_COMM_WORLD , &status); // tag 2 for matrix_c
-        }
+    /* Record calculation start time */
+    c_start_time = MPI_Wtime();
 
+    /* process our sub matricies */
+    add_sub_matrix_chunks(sub_matrix_a, sub_matrix_b, sub_matrix_c, rows_per_process);
+    
+    /* Record calculation end time */
+    c_end_time = MPI_Wtime();
+
+    /* Per instructions, local summation is complete, print "Process i: Done" */
+    printf("Process %d: Done\n", rank);
+
+    /* Collect results from all processes */
+    MPI_Gather( sub_matrix_c, element_count, MPI_INT, matrix_c, element_count, MPI_INT, 0, MPI_COMM_WORLD);
+
+    if(rank == 0) {
+        /* This process is rank 0, therefore it's the root */
+
+        /* record end time */
         end_time = MPI_Wtime();
 
         /* Output result matrix to file */
@@ -103,27 +114,28 @@ int main(int argc,char* argv[]) {
         }
         fclose(outfile);        
 
+
+        /* free allocated memory */
+        free(matrix_a);
+        free(matrix_b);
+        free(matrix_c);
+
+        /* calculate times */
+        double total_time = end_time - start_time;
+        double calc_time = c_end_time - c_start_time;
+        double comm_time = total_time - calc_time;
+
         /* output execution time to file */
         outfile = fopen(REPORTFILENAME, "a");
-        fprintf(outfile, "MPI %d process time: %f\n", number_of_processes, end_time - start_time);
+        fprintf(outfile, "MPI %d process time: %f  Calculation time: %f  Communication Time: %f\n", number_of_processes, total_time, calc_time, comm_time);
         fclose(outfile);
 
+        /* Print execution time to screen*/
+        printf("MPI %d process time: %f  Calculation time: %f  Communication Time: %f\n", number_of_processes, total_time, calc_time, comm_time);
+
     } // if rank==0
-    else {
-        /* This process is not rank 0, therefore only a worker */
 
-        /* establish matrix chunks */
-        int sub_matrix_a[element_count];
-        int sub_matrix_b[element_count];
-        int sub_matrix_c[element_count];
 
-        MPI_Recv( &sub_matrix_a , element_count , MPI_INT , 0 , 0 , MPI_COMM_WORLD , &status); // tag 0 for matrix_a
-        MPI_Recv( &sub_matrix_b , element_count , MPI_INT , 0 , 1 , MPI_COMM_WORLD , &status); // tag 1 for matrix_b
-        add_sub_matrix_chunks(sub_matrix_a, sub_matrix_b, sub_matrix_c, rows_per_process);
-        MPI_Send( sub_matrix_c, element_count , MPI_INT , 0 , 2 , MPI_COMM_WORLD); // tag 2 for matrix_c      
-    }
-
-    printf("Process %d: Done\n", rank);
 
     MPI_Finalize();
     return 0;
